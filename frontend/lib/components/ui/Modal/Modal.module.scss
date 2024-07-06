@@ -1,8 +1,8 @@
-@use "@/styles/BoxShadow.module.scss";
-@use "@/styles/Radius.module.scss";
-@use "@/styles/ScreenSizes.module.scss";
-@use "@/styles/Spacings.module.scss";
-@use "@/styles/ZIndexes.module.scss";
+@use "styles/BoxShadow.module.scss";
+@use "styles/Radius.module.scss";
+@use "styles/ScreenSizes.module.scss";
+@use "styles/Spacings.module.scss";
+@use "styles/ZIndexes.module.scss";
 
 .modal_container {
   display: flex;
@@ -23,17 +23,17 @@
     cursor: auto;
     box-shadow: BoxShadow.$medium;
     max-width: 90vw;
-    overflow: scroll;
     width: 35vw;
     height: 80vh;
+    overflow: auto;
 
     &.auto {
       height: auto;
     }
 
     &.big {
-      width: 40vw;
-      height: 90vh;
+      width: 50vw;
+      height: 95vh;
     }
 
     &.white {

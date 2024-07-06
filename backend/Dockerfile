@@ -1,5 +1,5 @@
 # Using a slim version for a smaller base image
-FROM python:3.11.6-slim-bullseye@sha256:0c1fbb294096d842ad795ee232d783cab436c90b034210fe894f2bb2f2be7626 AS base
+FROM python:3.11.6-slim-bullseye
 
 ARG DEV_MODE
 ENV DEV_MODE=$DEV_MODE
@@ -31,8 +31,6 @@ RUN apt-get clean && apt-get update && apt-get install -y \
     pandoc && \
     rm -rf /var/lib/apt/lists/*
 
-# Add Rust binaries to the PATH
-ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN ARCHITECTURE=$(uname -m) && \
     if [ "$ARCHITECTURE" = "x86_64" ]; then \
@@ -46,18 +44,41 @@ RUN ARCHITECTURE=$(uname -m) && \
     fi && \
     rm -rf /var/lib/apt/lists/*
 
+RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=/opt/poetry python && \
+    cd /usr/local/bin && \
+    ln -s /opt/poetry/bin/poetry && \
+    poetry config virtualenvs.create false
+
+
+# Add Rust binaries to the PATH
+ENV PATH="/root/.cargo/bin:${PATH}" \
+    POETRY_CACHE_DIR=/tmp/poetry_cache \
+    PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /code
 
-# Copy just the requirements first
-COPY ./requirements.txt .
 
-# Upgrade pip and install dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy monorepo dependencies
+# CORE
+COPY core/pyproject.toml core/README.md core/poetry.lock  /code/core/
+COPY core/quivr_core /code/core/quivr_core
+# API
+COPY api/pyproject.toml  api/poetry.lock api/README.md /code/api/
+COPY api/quivr_api /code/api/quivr_api
 
-# Copy the rest of the application
-COPY . .
+COPY ./pyproject.toml ./poetry.lock* /code/
+
+COPY ./ci-migration.sh /code/
+
+COPY supabase /code/supabase/
+
+# Run install
+RUN poetry install --no-root --with dev,test && \
+    playwright install --with-deps && \
+    rm -rf $POETRY_CACHE_DIR
+
+
+ENV PYTHONPATH=/code
+
 
 EXPOSE 5050
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5050", "--workers", "6"]

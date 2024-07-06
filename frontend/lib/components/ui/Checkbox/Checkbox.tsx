@@ -2,16 +2,20 @@ import { useEffect, useState } from "react";
 
 import styles from "./Checkbox.module.scss";
 
+import { Icon } from "../Icon/Icon";
+
 interface CheckboxProps {
-  label: string;
+  label?: string;
   checked: boolean;
-  setChecked: (value: boolean) => void;
+  setChecked: (value: boolean, event: React.MouseEvent) => void;
+  disabled?: boolean;
 }
 
 export const Checkbox = ({
   label,
   checked,
   setChecked,
+  disabled,
 }: CheckboxProps): JSX.Element => {
   const [currentChecked, setCurrentChecked] = useState<boolean>(checked);
 
@@ -21,16 +25,23 @@ export const Checkbox = ({
 
   return (
     <div
-      className={styles.checkbox_wrapper}
-      onClick={() => {
-        setChecked(!currentChecked);
-        setCurrentChecked(!currentChecked);
+      className={`${styles.checkbox_wrapper} ${
+        disabled ? styles.disabled : ""
+      }`}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!disabled) {
+          setChecked(!currentChecked, event);
+          setCurrentChecked(!currentChecked);
+        }
       }}
     >
       <div
         className={`${styles.checkbox} ${currentChecked ? styles.filled : ""}`}
-      ></div>
-      <span>{label}</span>
+      >
+        {currentChecked && <Icon name="check" size="tiny" color="white" />}
+      </div>
+      {label && <span>{label}</span>}
     </div>
   );
 };

@@ -1,5 +1,5 @@
-@use "@/styles/Spacings.module.scss";
-@use "@/styles/ZIndexes.module.scss";
+@use "styles/Spacings.module.scss";
+@use "styles/ZIndexes.module.scss";
 
 .knowledge_modal {
   position: relative;
@@ -9,9 +9,14 @@
   background-color: var(--background-0);
   width: 100%;
   flex: 1;
+  overflow: hidden;
 
-  .button {
+  .buttons {
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+
+    &.standalone {
+      justify-content: flex-end;
+    }
   }
 }

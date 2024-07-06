@@ -1,6 +1,6 @@
-@use "@/styles/Radius.module.scss";
-@use "@/styles/Spacings.module.scss";
-@use "@/styles/Typography.module.scss";
+@use "styles/Radius.module.scss";
+@use "styles/Spacings.module.scss";
+@use "styles/Typography.module.scss";
 
 .mention_item_wrapper {
   display: flex;
@@ -20,5 +20,9 @@
 
   .brain_name {
     @include Typography.EllipsisOverflow;
+  }
+
+  .dark_image {
+    filter: invert(100%);
   }
 }

@@ -21,6 +21,8 @@ export type ChatMessage = {
   brain_id?: UUID;
   metadata?: {
     sources?: Source[];
+    thoughts?: string;
+    followup_questions?: string[];
   };
   thumbs?: boolean;
 };
