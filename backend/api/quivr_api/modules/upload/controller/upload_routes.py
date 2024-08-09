@@ -33,17 +33,15 @@ notification_service = NotificationService()
 knowledge_service = KnowledgeService()
 
 
-@upload_router.get("/upload/healthz", tags=["Health"])
-async def healthz():
-    return {"status": "ok"}
-
-
 @upload_router.post("/upload", dependencies=[Depends(AuthBearer())], tags=["Upload"])
 async def upload_file(
     uploadFile: UploadFile,
+    bulk_id: Optional[UUID] = Query(None, description="The ID of the bulk upload"),
     brain_id: UUID = Query(..., description="The ID of the brain"),
     chat_id: Optional[UUID] = Query(None, description="The ID of the chat"),
     current_user: UserIdentity = Depends(get_current_user),
+    integration: Optional[str] = None,
+    integration_link: Optional[str] = None,
 ):
     validate_brain_authorization(
         brain_id, current_user.id, [RoleEnum.Editor, RoleEnum.Owner]
@@ -57,8 +55,11 @@ async def upload_file(
     upload_notification = notification_service.add_notification(
         CreateNotification(
             user_id=current_user.id,
+            bulk_id=bulk_id,
             status=NotificationsStatusEnum.INFO,
-            title=f"Processing File {uploadFile.filename}",
+            title=f"{uploadFile.filename}",
+            category="upload",
+            brain_id=str(brain_id),
         )
     )
 
@@ -81,19 +82,27 @@ async def upload_file(
     except Exception as e:
         print(e)
 
-        notification_service.update_notification_by_id(
-            upload_notification.id if upload_notification else None,
-            NotificationUpdatableProperties(
-                status=NotificationsStatusEnum.ERROR,
-                description=f"There was an error uploading the file: {e}",
-            ),
-        )
+
         if "The resource already exists" in str(e):
+            notification_service.update_notification_by_id(
+                upload_notification.id if upload_notification else None,
+                NotificationUpdatableProperties(
+                    status=NotificationsStatusEnum.ERROR,
+                    description=f"File {uploadFile.filename} already exists in storage.",
+                ),
+            )
             raise HTTPException(
                 status_code=403,
                 detail=f"File {uploadFile.filename} already exists in storage.",
             )
         else:
+            notification_service.update_notification_by_id(
+                upload_notification.id if upload_notification else None,
+                NotificationUpdatableProperties(
+                    status=NotificationsStatusEnum.ERROR,
+                    description=f"There was an error uploading the file",
+                ),
+            )
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload file to storage. {e}"
             )
@@ -104,14 +113,19 @@ async def upload_file(
         extension=os.path.splitext(
             uploadFile.filename  # pyright: ignore reportPrivateUsage=none
         )[-1].lower(),
+        integration=integration,
+        integration_link=integration_link,
     )
 
-    knowledge_service.add_knowledge(knowledge_to_add)
+    knowledge = knowledge_service.add_knowledge(knowledge_to_add)
 
     process_file_and_notify.delay(
         file_name=filename_with_brain_id,
         file_original_name=uploadFile.filename,
         brain_id=brain_id,
         notification_id=upload_notification.id,
+        knowledge_id=knowledge.id,
+        integration=integration,
+        integration_link=integration_link,
     )
     return {"message": "File processing has started."}

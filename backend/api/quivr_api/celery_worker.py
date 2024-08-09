@@ -5,6 +5,7 @@ from uuid import UUID
 
 from celery.schedules import crontab
 from pytz import timezone
+
 from quivr_api.celery_config import celery
 from quivr_api.logger import get_logger
 from quivr_api.middlewares.auth.auth_bearer import AuthBearer
@@ -13,151 +14,109 @@ from quivr_api.models.settings import get_supabase_client, get_supabase_db
 from quivr_api.modules.brain.integrations.Notion.Notion_connector import NotionConnector
 from quivr_api.modules.brain.service.brain_service import BrainService
 from quivr_api.modules.brain.service.brain_vector_service import BrainVectorService
-from quivr_api.modules.notification.dto.inputs import NotificationUpdatableProperties
-from quivr_api.modules.notification.entity.notification import NotificationsStatusEnum
 from quivr_api.modules.notification.service.notification_service import (
     NotificationService,
 )
-from quivr_api.modules.onboarding.service.onboarding_service import OnboardingService
 from quivr_api.packages.files.crawl.crawler import CrawlWebsite, slugify
-from quivr_api.packages.files.parsers.github import process_github
 from quivr_api.packages.files.processors import filter_file
 from quivr_api.packages.utils.telemetry import maybe_send_telemetry
 
 logger = get_logger(__name__)
 
-onboardingService = OnboardingService()
 notification_service = NotificationService()
 brain_service = BrainService()
 auth_bearer = AuthBearer()
 
 
-@celery.task(name="process_file_and_notify")
+@celery.task(
+    retries=3,
+    default_retry_delay=1,
+    name="process_file_and_notify",
+    autoretry_for=(Exception,),
+)
 def process_file_and_notify(
     file_name: str,
     file_original_name: str,
     brain_id,
-    notification_id=None,
+    notification_id: UUID,
+    knowledge_id: UUID,
     integration=None,
+    integration_link=None,
     delete_file=False,
 ):
-    try:
-        supabase_client = get_supabase_client()
-        tmp_name = file_name.replace("/", "_")
-        base_file_name = os.path.basename(file_name)
-        _, file_extension = os.path.splitext(base_file_name)
+    logger.debug(
+        f"process_file file_name={file_name}, knowledge_id={knowledge_id}, brain_id={brain_id}, notification_id={notification_id}"
+    )
+    supabase_client = get_supabase_client()
+    tmp_name = file_name.replace("/", "_")
+    base_file_name = os.path.basename(file_name)
+    _, file_extension = os.path.splitext(base_file_name)
 
-        with NamedTemporaryFile(
-            suffix="_" + tmp_name,  # pyright: ignore reportPrivateUsage=none
-        ) as tmp_file:
-            res = supabase_client.storage.from_("quivr").download(file_name)
-            tmp_file.write(res)
-            tmp_file.flush()
-            file_instance = File(
-                file_name=base_file_name,
-                tmp_file_path=tmp_file.name,
-                bytes_content=res,
-                file_size=len(res),
-                file_extension=file_extension,
-            )
-            brain_vector_service = BrainVectorService(brain_id)
-            if delete_file:  # TODO fix bug
-                brain_vector_service.delete_file_from_brain(
-                    file_original_name, only_vectors=True
-                )
-
-            filter_file(
-                file=file_instance,
-                brain_id=brain_id,
-                original_file_name=file_original_name,
+    with NamedTemporaryFile(
+        suffix="_" + tmp_name,  # pyright: ignore reportPrivateUsage=none
+    ) as tmp_file:
+        res = supabase_client.storage.from_("quivr").download(file_name)
+        tmp_file.write(res)
+        tmp_file.flush()
+        file_instance = File(
+            file_name=base_file_name,
+            tmp_file_path=tmp_file.name,
+            bytes_content=res,
+            file_size=len(res),
+            file_extension=file_extension,
+        )
+        brain_vector_service = BrainVectorService(brain_id)
+        if delete_file:  # TODO fix bug
+            brain_vector_service.delete_file_from_brain(
+                file_original_name, only_vectors=True
             )
 
-            if notification_id:
-                notification_service.update_notification_by_id(
-                    notification_id,
-                    NotificationUpdatableProperties(
-                        status=NotificationsStatusEnum.SUCCESS,
-                        description="Your file has been properly uploaded!",
-                    ),
-                )
-            brain_service.update_brain_last_update_time(brain_id)
-
-            return True
-
-    except TimeoutError:
-        logger.error("TimeoutError")
-
-    except Exception as e:
-        logger.exception(e)
-        notification_service.update_notification_by_id(
-            notification_id,
-            NotificationUpdatableProperties(
-                status=NotificationsStatusEnum.ERROR,
-                description=f"An error occurred while processing the file: {e}",
-            ),
+        filter_file(
+            file=file_instance,
+            brain_id=brain_id,
+            original_file_name=file_original_name,
+            integration=integration,
+            integration_link=integration_link,
         )
 
+        brain_service.update_brain_last_update_time(brain_id)
 
-@celery.task(name="process_crawl_and_notify")
+
+@celery.task(
+    retries=3,
+    default_retry_delay=1,
+    name="process_crawl_and_notify",
+    autoretry_for=(Exception,),
+)
 def process_crawl_and_notify(
     crawl_website_url: str,
     brain_id: UUID,
+    knowledge_id: UUID,
     notification_id=None,
 ):
     crawl_website = CrawlWebsite(url=crawl_website_url)
+    # Build file data
+    extracted_content = crawl_website.process()
+    extracted_content_bytes = extracted_content.encode("utf-8")
+    file_name = slugify(crawl_website.url) + ".txt"
 
-    if not crawl_website.checkGithub():
-        # Build file data
-        extracted_content = crawl_website.process()
-        extracted_content_bytes = extracted_content.encode("utf-8")
-        file_name = slugify(crawl_website.url) + ".txt"
-
-        with NamedTemporaryFile(
-            suffix="_" + file_name,  # pyright: ignore reportPrivateUsage=none
-        ) as tmp_file:
-            tmp_file.write(extracted_content_bytes)
-            tmp_file.flush()
-            file_instance = File(
-                file_name=file_name,
-                tmp_file_path=tmp_file.name,
-                bytes_content=extracted_content_bytes,
-                file_size=len(extracted_content),
-                file_extension=".txt",
-            )
-            filter_file(
-                file=file_instance,
-                brain_id=brain_id,
-                original_file_name=crawl_website_url,
-            )
-            notification_service.update_notification_by_id(
-                notification_id,
-                NotificationUpdatableProperties(
-                    status=NotificationsStatusEnum.SUCCESS,
-                    description="Your URL has been properly crawled!",
-                ),
-            )
-    else:
-        process_github(
-            repo=crawl_website.url,
+    with NamedTemporaryFile(
+        suffix="_" + file_name,  # pyright: ignore reportPrivateUsage=none
+    ) as tmp_file:
+        tmp_file.write(extracted_content_bytes)
+        tmp_file.flush()
+        file_instance = File(
+            file_name=file_name,
+            tmp_file_path=tmp_file.name,
+            bytes_content=extracted_content_bytes,
+            file_size=len(extracted_content),
+            file_extension=".txt",
+        )
+        filter_file(
+            file=file_instance,
             brain_id=brain_id,
+            original_file_name=crawl_website_url,
         )
-
-    if notification_id:
-        notification_service.update_notification_by_id(
-            notification_id,
-            NotificationUpdatableProperties(
-                status=NotificationsStatusEnum.SUCCESS,
-                description="Your file has been properly uploaded!",
-            ),
-        )
-
-    brain_service.update_brain_last_update_time(brain_id)
-    return True
-
-
-@celery.task
-def remove_onboarding_more_than_x_days_task():
-    onboardingService.remove_onboarding_more_than_x_days(7)
 
 
 @celery.task(name="NotionConnectorLoad")
@@ -183,6 +142,10 @@ def ping_telemetry():
 
 @celery.task(name="check_if_is_premium_user")
 def check_if_is_premium_user():
+    if os.getenv("DEACTIVATE_STRIPE") == "true":
+        logger.info("Stripe deactivated, skipping check for premium users")
+        return True
+
     supabase = get_supabase_db()
     supabase_db = supabase.db
 
@@ -240,15 +203,19 @@ def check_if_is_premium_user():
     premium_user_ids = set()
     settings_to_upsert = {}
     for sub in subscriptions:
-        if sub["attrs"]["status"] != "active":
+        logger.info(f"Subscription {sub['id']}")
+        if sub["attrs"]["status"] != "active" and sub["attrs"]["status"] != "trialing":
+            logger.info(f"Subscription {sub['id']} is not active or trialing")
             continue
 
         customer = customer_dict.get(sub["customer"])
         if not customer:
+            logger.info(f"No customer found for subscription: {sub['customer']}")
             continue
 
         user_id = user_dict.get(customer["email"])
         if not user_id:
+            logger.info(f"No user found for customer: {customer['email']}")
             continue
 
         current_settings = settings_dict.get(user_id, {})
@@ -257,6 +224,7 @@ def check_if_is_premium_user():
         # Skip if the user was checked recently
         if last_check and datetime.fromisoformat(last_check) > memoization_cutoff:
             premium_user_ids.add(user_id)
+            logger.info(f"User {user_id} was checked recently")
             continue
 
         user_id = str(user_id)  # Ensure user_id is a string
@@ -274,13 +242,14 @@ def check_if_is_premium_user():
             "max_brain_size": product["max_brain_size"],
             "monthly_chat_credit": product["monthly_chat_credit"],
             "api_access": product["api_access"],
-            "models": product["models"],
             "is_premium": True,
             "last_stripe_check": current_time_str,
         }
+        logger.info(f"Upserting settings for user {user_id}")
 
     # Bulk upsert premium user settings in batches of 10
     settings_list = list(settings_to_upsert.values())
+    logger.info(f"Upserting {len(settings_list)} settings")
     for i in range(0, len(settings_list), 10):
         batch = settings_list[i : i + 10]
         supabase_db.table("user_settings").upsert(batch).execute()
@@ -302,10 +271,6 @@ def check_if_is_premium_user():
 
 
 celery.conf.beat_schedule = {
-    "remove_onboarding_more_than_x_days_task": {
-        "task": f"{__name__}.remove_onboarding_more_than_x_days_task",
-        "schedule": crontab(minute="0", hour="0"),
-    },
     "ping_telemetry": {
         "task": f"{__name__}.ping_telemetry",
         "schedule": crontab(minute="*/30", hour="*"),

@@ -26,17 +26,18 @@ import {
   FaDiscord,
   FaFile,
   FaFileAlt,
-  FaFolder,
   FaGithub,
   FaLinkedin,
   FaQuestionCircle,
   FaRegFileAlt,
   FaRegFileAudio,
+  FaRegFolder,
   FaRegKeyboard,
   FaRegStar,
   FaRegThumbsDown,
   FaRegThumbsUp,
   FaRegUserCircle,
+  FaSort,
   FaTwitter,
   FaUnlock,
 } from "react-icons/fa";
@@ -47,7 +48,6 @@ import { HiBuildingOffice } from "react-icons/hi2";
 import {
   IoIosAdd,
   IoIosHelpCircleOutline,
-  IoIosNotifications,
   IoIosRadio,
   IoMdClose,
   IoMdLogOut,
@@ -66,6 +66,7 @@ import {
 import { LiaFileVideo, LiaRobotSolid } from "react-icons/lia";
 import { IconType } from "react-icons/lib";
 import {
+  LuArrowLeftFromLine,
   LuBrain,
   LuBrainCircuit,
   LuChevronDown,
@@ -95,7 +96,11 @@ import {
   MdUploadFile,
 } from "react-icons/md";
 import { PiOfficeChairFill } from "react-icons/pi";
-import { RiDeleteBackLine, RiHashtag } from "react-icons/ri";
+import {
+  RiDeleteBackLine,
+  RiHashtag,
+  RiNotification2Line,
+} from "react-icons/ri";
 import { SlOptions } from "react-icons/sl";
 import { TbNetwork, TbRobot } from "react-icons/tb";
 import { VscGraph } from "react-icons/vsc";
@@ -122,6 +127,7 @@ export const iconList: { [name: string]: IconType } = {
   custom: MdDashboardCustomize,
   delete: MdDeleteOutline,
   discord: FaDiscord,
+  doc: BsFiletypeDocx,
   docx: BsFiletypeDocx,
   download: IoCloudDownloadOutline,
   edit: MdOutlineModeEditOutline,
@@ -134,13 +140,14 @@ export const iconList: { [name: string]: IconType } = {
   fileSelected: FaFileAlt,
   flag: CiFlag1,
   fold: MdUnfoldLess,
-  folder: FaFolder,
+  folder: FaRegFolder,
   followUp: IoArrowUpCircleOutline,
   github: FaGithub,
   goal: LuGoal,
   graph: VscGraph,
   hashtag: RiHashtag,
   help: IoIosHelpCircleOutline,
+  hide: LuArrowLeftFromLine,
   history: MdHistory,
   home: IoHomeOutline,
   html: BsFiletypeHtml,
@@ -159,7 +166,7 @@ export const iconList: { [name: string]: IconType } = {
   mp4: BsFiletypeMp4,
   mpga: FaRegFileAudio,
   mpeg: LiaFileVideo,
-  notifications: IoIosNotifications,
+  notifications: RiNotification2Line,
   office: HiBuildingOffice,
   odt: BsFiletypeDocx,
   options: SlOptions,
@@ -176,6 +183,7 @@ export const iconList: { [name: string]: IconType } = {
   settings: IoMdSettings,
   share: IoShareSocial,
   software: CgSoftwareDownload,
+  sort: FaSort,
   sources: IoBookOutline,
   star: FaRegStar,
   step: IoFootsteps,

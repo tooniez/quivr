@@ -6,12 +6,12 @@ from fastapi.responses import StreamingResponse
 
 from quivr_api.logger import get_logger
 from quivr_api.middlewares.auth import AuthBearer, get_current_user
-from quivr_api.models.settings import get_embedding_client, get_supabase_client
-from quivr_api.modules.brain.service.brain_service import BrainService
-from quivr_api.modules.chat.controller.chat.brainful_chat import (
-    BrainfulChat,
-    validate_authorization,
+from quivr_api.modules.brain.entity.brain_entity import RoleEnum
+from quivr_api.modules.brain.service.brain_authorization_service import (
+    validate_brain_authorization,
 )
+from quivr_api.modules.brain.service.brain_service import BrainService
+from quivr_api.modules.chat.controller.chat.utils import check_and_update_user_usage
 from quivr_api.modules.chat.dto.chats import ChatItem, ChatQuestion
 from quivr_api.modules.chat.dto.inputs import (
     ChatMessageProperties,
@@ -21,13 +21,15 @@ from quivr_api.modules.chat.dto.inputs import (
 )
 from quivr_api.modules.chat.entity.chat import Chat
 from quivr_api.modules.chat.service.chat_service import ChatService
+from quivr_api.modules.chat_llm_service.chat_llm_service import ChatLLMService
 from quivr_api.modules.dependencies import get_service
 from quivr_api.modules.knowledge.repository.knowledges import KnowledgeRepository
+from quivr_api.modules.models.service.model_service import ModelService
 from quivr_api.modules.prompt.service.prompt_service import PromptService
+from quivr_api.modules.rag_service import RAGService
 from quivr_api.modules.user.entity.user_identity import UserIdentity
-from quivr_api.packages.quivr_core.rag_service import RAGService
 from quivr_api.packages.utils.telemetry import maybe_send_telemetry
-from quivr_api.vectorstore.supabase import CustomSupabaseVectorStore
+from quivr_api.packages.utils.uuid_generator import generate_uuid_from_string
 
 logger = get_logger(__name__)
 
@@ -39,54 +41,16 @@ prompt_service = PromptService()
 
 ChatServiceDep = Annotated[ChatService, Depends(get_service(ChatService))]
 UserIdentityDep = Annotated[UserIdentity, Depends(get_current_user)]
+ModelServiceDep = Annotated[ModelService, Depends(get_service(ModelService))]
 
 
-def init_vector_store(user_id: UUID) -> CustomSupabaseVectorStore:
-    """
-    Initialize the vector store
-    """
-    supabase_client = get_supabase_client()
-    embedding_service = get_embedding_client()
-    vector_store = CustomSupabaseVectorStore(
-        supabase_client, embedding_service, table_name="vectors", user_id=user_id
-    )
-
-    return vector_store
-
-
-async def get_answer_generator(
-    chat_id: UUID,
-    chat_question: ChatQuestion,
-    chat_service: ChatService,
-    brain_id: UUID | None,
-    current_user: UserIdentity,
-):
-    chat_instance = BrainfulChat()
-    vector_store = init_vector_store(user_id=current_user.id)
-
-    # Get History only if needed
-    if not brain_id:
-        history = await chat_service.get_chat_history(chat_id)
-    else:
-        history = []
-
-    # TODO(@aminediro) : NOT USED anymore
-    brain, metadata_brain = brain_service.find_brain_from_question(
-        brain_id, chat_question.question, current_user, chat_id, history, vector_store
-    )
-    gpt_answer_generator = chat_instance.get_answer_generator(
-        brain=brain,
-        chat_id=str(chat_id),
-        chat_service=chat_service,
-        model=brain.model,
-        temperature=0.1,
-        streaming=True,
-        prompt_id=chat_question.prompt_id,
-        user_id=current_user.id,
-        user_email=current_user.email,
-    )
-
-    return gpt_answer_generator
+def validate_authorization(user_id, brain_id):
+    if brain_id:
+        validate_brain_authorization(
+            brain_id=brain_id,
+            user_id=user_id,
+            required_roles=[RoleEnum.Viewer, RoleEnum.Editor, RoleEnum.Owner],
+        )
 
 
 @chat_router.get("/chat/healthz", tags=["Health"])
@@ -138,7 +102,7 @@ async def update_chat_metadata_handler(
     """
 
     chat = await chat_service.get_chat_by_id(chat_id)
-    if str(current_user.id) != chat.user_id:
+    if str(current_user.id) != str(chat.user_id):
         raise HTTPException(
             status_code=403,  # pyright: ignore reportPrivateUsage=none
             detail="You should be the owner of the chat to update it.",  # pyright: ignore reportPrivateUsage=none
@@ -158,7 +122,8 @@ async def update_chat_message(
     chat = await chat_service.get_chat_by_id(
         chat_id  # pyright: ignore reportPrivateUsage=none
     )
-    if str(current_user.id) != chat.user_id:
+
+    if str(current_user.id) != str(chat.user_id):
         raise HTTPException(
             status_code=403,  # pyright: ignore reportPrivateUsage=none
             detail="You should be the owner of the chat to update it.",  # pyright: ignore reportPrivateUsage=none
@@ -202,23 +167,57 @@ async def create_question_handler(
     chat_id: UUID,
     current_user: UserIdentityDep,
     chat_service: ChatServiceDep,
+    model_service: ModelServiceDep,
     brain_id: Annotated[UUID | None, Query()] = None,
 ):
-    # TODO: check logic into middleware
-    validate_authorization(user_id=current_user.id, brain_id=brain_id)
-    try:
-        rag_service = RAGService(
-            current_user,
-            brain_id,
-            chat_id,
-            brain_service,
-            prompt_service,
-            chat_service,
-            knowledge_service,
-        )
-        chat_answer = await rag_service.generate_answer(chat_question.question)
+    models = await model_service.get_models()
 
-        maybe_send_telemetry("question_asked", {"streaming": False}, request)
+    model_to_use = None
+    # Check if the brain_id is a model name hashed to a uuid and then returns the model name
+    # if chat_question.brain_id in [generate_uuid_from_string(model.name) for model in models]:
+    #     mode
+    for model in models:
+        if brain_id == generate_uuid_from_string(model.name):
+            model_to_use = model
+            break
+
+    try:
+        service = None | RAGService | ChatLLMService
+        if not model_to_use:
+            brain = brain_service.get_brain_details(brain_id, current_user.id)  # type: ignore
+            model = await check_and_update_user_usage(
+                current_user, str(brain.model), model_service
+            )  # type: ignore
+            assert model is not None  # type: ignore
+            assert brain is not None  # type: ignore
+
+            brain.model = model.name
+            validate_authorization(user_id=current_user.id, brain_id=brain_id)
+            service = RAGService(
+                current_user,
+                brain,
+                chat_id,
+                brain_service,
+                prompt_service,
+                chat_service,
+                knowledge_service,
+                model_service,
+            )
+        else:
+            await check_and_update_user_usage(
+                current_user, model_to_use.name, model_service
+            )  # type: ignore
+            service = ChatLLMService(
+                current_user,
+                model_to_use.name,
+                chat_id,
+                chat_service,
+                model_service,
+            )  # type: ignore
+        assert service is not None  # type: ignore
+        maybe_send_telemetry("question_asked", {"streaming": True}, request)
+        chat_answer = await service.generate_answer(chat_question.question)
+
         return chat_answer
 
     except AssertionError:
@@ -246,28 +245,62 @@ async def create_stream_question_handler(
     chat_id: UUID,
     chat_service: ChatServiceDep,
     current_user: UserIdentityDep,
+    model_service: ModelServiceDep,
     brain_id: Annotated[UUID | None, Query()] = None,
 ) -> StreamingResponse:
-    validate_authorization(user_id=current_user.id, brain_id=brain_id)
-
     logger.info(
         f"Creating question for chat {chat_id} with brain {brain_id} of type {type(brain_id)}"
     )
 
+    models = await model_service.get_models()
+
+    model_to_use = None
+    # Check if the brain_id is a model name hashed to a uuid and then returns the model name
+    # if chat_question.brain_id in [generate_uuid_from_string(model.name) for model in models]:
+    #     mode
+    for model in models:
+        if brain_id == generate_uuid_from_string(model.name):
+            model_to_use = model
+            break
+
     try:
-        rag_service = RAGService(
-            current_user,
-            brain_id,
-            chat_id,
-            brain_service,
-            prompt_service,
-            chat_service,
-            knowledge_service,
-        )
+        service = None
+        if not model_to_use:
+            brain = brain_service.get_brain_details(brain_id, current_user.id)  # type: ignore
+            model = await check_and_update_user_usage(
+                current_user, str(brain.model), model_service
+            )  # type: ignore
+            assert model is not None  # type: ignore
+            assert brain is not None  # type: ignore
+
+            brain.model = model.name
+            validate_authorization(user_id=current_user.id, brain_id=brain_id)
+            service = RAGService(
+                current_user,
+                brain,
+                chat_id,
+                brain_service,
+                prompt_service,
+                chat_service,
+                knowledge_service,
+                model_service,
+            )
+        else:
+            await check_and_update_user_usage(
+                current_user, model_to_use.name, model_service
+            )  # type: ignore
+            service = ChatLLMService(
+                current_user,
+                model_to_use.name,
+                chat_id,
+                chat_service,
+                model_service,
+            )  # type: ignore
+        assert service is not None  # type: ignore
         maybe_send_telemetry("question_asked", {"streaming": True}, request)
 
         return StreamingResponse(
-            rag_service.generate_answer_stream(chat_question.question),
+            service.generate_answer_stream(chat_question.question),
             media_type="text/event-stream",
         )
 

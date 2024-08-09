@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.pydantic_v1 import BaseModel as BaseModelV1
 from langchain_core.pydantic_v1 import Field as FieldV1
 from pydantic import BaseModel
@@ -15,12 +17,6 @@ class cited_answer(BaseModelV1):
         ...,
         description="The answer to the user question, which is based only on the given sources.",
     )
-    thoughts: str = FieldV1(
-        ...,
-        description="""Description of the thought process, based only on the given sources.
-        Cite the text as much as possible and give the document name it appears in. In the format : 'Doc_name states : cited_text'. Be the most
-        procedural as possible. Write all the steps needed to find the answer until you find it.""",
-    )
     citations: list[int] = FieldV1(
         ...,
         description="The integer IDs of the SPECIFIC sources which justify the answer.",
@@ -32,17 +28,13 @@ class cited_answer(BaseModelV1):
     )
 
 
-class GetChatHistoryOutput(BaseModel):
+class ChatMessage(BaseModelV1):
     chat_id: UUID
     message_id: UUID
-    user_message: str
+    brain_id: UUID | None
+    msg: AIMessage | HumanMessage
     message_time: datetime
-    assistant: str | None = None
-    prompt_title: str | None = None
-    brain_name: str | None = None
-    brain_id: UUID | None = None  # string because UUID is not JSON serializable
-    metadata: dict | None = None
-    thumbs: bool | None = None
+    metadata: dict[str, Any]
 
 
 class Source(BaseModel):
@@ -63,11 +55,20 @@ class RawRAGResponse(TypedDict):
     docs: dict[str, Any]
 
 
+class ChatLLMMetadata(BaseModel):
+    name: str
+    display_name: str | None = None
+    description: str | None = None
+    image_url: str | None = None
+    brain_id: str | None = None
+    brain_name: str | None = None
+
+
 class RAGResponseMetadata(BaseModel):
     citations: list[int] | None = None
-    thoughts: str | list[str] | None = None
     followup_questions: list[str] | None = None
     sources: list[Any] | None = None
+    metadata_model: ChatLLMMetadata | None = None
 
 
 class ParsedRAGResponse(BaseModel):
@@ -87,3 +88,12 @@ class QuivrKnowledge(BaseModel):
     file_name: str | None = None
     url: str | None = None
     extension: str = "txt"
+    status: str = "PROCESSING"
+    integration: str | None = None
+    integration_link: str | None = None
+
+
+# NOTE: for compatibility issues with langchain <-> PydanticV1
+class SearchResult(BaseModelV1):
+    chunk: Document
+    distance: float

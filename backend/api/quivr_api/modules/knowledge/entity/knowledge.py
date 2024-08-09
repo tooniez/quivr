@@ -10,3 +10,6 @@ class Knowledge(BaseModel):
     file_name: Optional[str] = None
     url: Optional[str] = None
     extension: str = "txt"
+    status: str
+    integration: Optional[str] = None
+    integration_link: Optional[str] = None

@@ -4,21 +4,18 @@ from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel
-from quivr_api.modules.brain.entity.api_brain_definition_entity import (
-    ApiBrainDefinitionEntity,
-)
+
+# from sqlmodel import Enum as PGEnum
+from sqlalchemy.dialects.postgresql import ENUM as PGEnum
+from sqlalchemy.ext.asyncio import AsyncAttrs
+from sqlmodel import TIMESTAMP, Column, Field, Relationship, SQLModel, text
+from sqlmodel import UUID as PGUUID
+
 from quivr_api.modules.brain.entity.integration_brain import (
     IntegrationDescriptionEntity,
     IntegrationEntity,
 )
 from quivr_api.modules.prompt.entity.prompt import Prompt
-
-# from sqlmodel import Enum as PGEnum
-from sqlalchemy.dialects.postgresql import ENUM as PGEnum
-from sqlalchemy.ext.asyncio import AsyncAttrs
-from sqlmodel import TIMESTAMP
-from sqlmodel import UUID as PGUUID
-from sqlmodel import Column, Field, Relationship, SQLModel, text
 
 
 class BrainType(str, Enum):
@@ -26,6 +23,7 @@ class BrainType(str, Enum):
     api = "api"
     composite = "composite"
     integration = "integration"
+    model = "model"
 
 
 class Brain(AsyncAttrs, SQLModel, table=True):
@@ -82,10 +80,6 @@ class BrainEntity(BaseModel):
     prompt_id: Optional[UUID] = None
     last_update: datetime
     brain_type: BrainType
-    brain_definition: Optional[ApiBrainDefinitionEntity] = None
-    connected_brains_ids: Optional[List[UUID]] = None
-    raw: Optional[bool] = None
-    jq_instructions: Optional[str] = None
     integration: Optional[IntegrationEntity] = None
     integration_description: Optional[IntegrationDescriptionEntity] = None
 
@@ -99,16 +93,6 @@ class BrainEntity(BaseModel):
         )
         data["id"] = self.id
         return data
-
-
-class PublicBrain(BaseModel):
-    id: UUID
-    name: str
-    description: Optional[str] = None
-    number_of_subscribers: int = 0
-    last_update: str
-    brain_type: BrainType
-    brain_definition: Optional[ApiBrainDefinitionEntity] = None
 
 
 class RoleEnum(str, Enum):
@@ -127,9 +111,16 @@ class BrainUser(BaseModel):
 class MinimalUserBrainEntity(BaseModel):
     id: UUID
     name: str
+    brain_model: Optional[str] = None
     rights: RoleEnum
     status: str
     brain_type: BrainType
     description: str
     integration_logo_url: str
     max_files: int
+    price: Optional[int] = None
+    max_input: Optional[int] = None
+    max_output: Optional[int] = None
+    display_name: Optional[str] = None
+    image_url: Optional[str] = None
+    model: bool = False
